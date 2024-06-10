@@ -1,0 +1,279 @@
+import warnings
+warnings.filterwarnings('ignore', message='Trying to estimate tuning from empty frequency set')
+warnings.filterwarnings('ignore', message='PySoundFile failed. Trying audioread instead.')
+
+import pandas as pd
+import numpy as np
+import os
+import librosa
+import random
+import pywt
+from tqdm.auto import tqdm
+import matplotlib.pyplot as plt
+import shap
+from sklearn.decomposition import PCA
+from sklearn.ensemble import IsolationForest
+
+# 설정값 정의
+CFG = {
+    'SR': 20000,
+    'N_MELS': 128,
+    'SEED': 41,
+    'n_estimator': 100  # 추가된 설정값
+}
+
+# 랜덤 시드 고정 함수
+def seed_everything(seed):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+
+seed_everything(CFG['SEED'])
+
+# 타임 도메인 특징 추출 함수
+def extract_time_domain_features(audio_data):
+    time_features = [
+        np.max(np.abs(audio_data)),  # 최대 절대값
+        np.min(np.abs(audio_data)),  # 최소 절대값
+        np.mean(np.abs(audio_data)),  # 절대값의 평균
+        np.sqrt(np.mean(audio_data**2)),  # RMS
+        np.var(audio_data),  # 분산
+        np.mean((audio_data - np.mean(audio_data))**3) / np.mean((audio_data - np.mean(audio_data))**2)**(3/2),  # 왜도
+        np.mean((audio_data - np.mean(audio_data))**4) / np.mean((audio_data - np.mean(audio_data))**2)**2,  # 첨도
+        np.std(audio_data),  # 표준편차
+        np.median(np.abs(audio_data))  # 절대값의 중앙값
+    ]
+    return time_features
+
+# FFT 변환 함수
+def compute_fft(audio_data, sample_rate):
+    fft_spectrum = np.fft.fft(audio_data)
+    fft_magnitude = np.abs(fft_spectrum)
+    fft_frequencies = np.fft.fftfreq(len(fft_spectrum), 1/sample_rate)
+    return fft_frequencies[:len(fft_frequencies)//2], fft_magnitude[:len(fft_magnitude)//2]
+
+# Mel-Spectrogram 특징 추출 함수
+def extract_mel_spectrogram_features(audio_data, sample_rate):
+    mel_spectrogram = librosa.feature.melspectrogram(y=audio_data, sr=sample_rate, n_mels=CFG['N_MELS'])
+    mel_spectrogram_db = librosa.power_to_db(mel_spectrogram, ref=np.max)
+    mel_features = np.mean(mel_spectrogram_db, axis=1)
+    return mel_spectrogram_db, mel_features
+
+# 통합 특징 추출 함수
+def extract_combined_features(file_paths):
+    combined_features = []
+    for audio_file in tqdm(file_paths, desc='Extracting Combined Features'):
+        try:
+            audio_data, sample_rate = librosa.load(audio_file, sr=CFG['SR'])
+            if len(audio_data) == 0:
+                raise ValueError("Empty audio file")
+        except Exception as e:
+            print(f"Error loading {audio_file}: {e}")
+            continue
+
+        # 타임 도메인 특징 추출
+        time_features = extract_time_domain_features(audio_data)
+        
+        # FFT 변환
+        fft_frequencies, fft_magnitude = compute_fft(audio_data, sample_rate)
+        
+        # Mel-Spectrogram 특징 추출
+        mel_spectrogram_db, mel_features = extract_mel_spectrogram_features(audio_data, sample_rate)
+        
+        # 모든 특징 통합
+        combined_feature = time_features + list(fft_magnitude) + list(mel_features)
+        combined_features.append((combined_feature, fft_frequencies, fft_magnitude, mel_spectrogram_db))
+    
+    return combined_features
+
+# 사용자 정의 스코어 함수
+def custom_scorer(estimator, X, y=None):
+    return -np.mean(estimator.score_samples(X))
+
+# FAN_TYPE에 따른 데이터 분리 함수
+def Fantype_split(Data):
+    Data_FanType_0 = Data.loc[Data.FAN_TYPE == 0]
+    Data_FanType_2 = Data.loc[Data.FAN_TYPE == 2]
+    return Data_FanType_0, Data_FanType_2
+
+# Z-score 정규화 함수
+def z_score_normalization(train_data, test_data):
+    mean = train_data.mean()
+    std = train_data.std()
+    train_data_normalized = (train_data - mean) / std
+    test_data_normalized = (test_data - mean) / std
+    return train_data_normalized, test_data_normalized
+
+# 데이터 경로 설정
+train_audio_dir = "C:/Users/sookj/Downloads/open/train"
+test_audio_dir = "C:/Users/sookj/Downloads/open/test"
+train_csv_path = "C:/Users/sookj/Downloads/open/train.csv"
+test_csv_path = "C:/Users/sookj/Downloads/open/test.csv"
+sample_submission_path = "C:/Users/sookj/Downloads/open/sample_submission.csv"
+
+# 데이터 로드
+train_df = pd.read_csv(train_csv_path)
+test_df = pd.read_csv(test_csv_path)
+submission_df = pd.read_csv(sample_submission_path)
+
+# SAMPLE_PATH에 디렉토리 경로 추가
+train_df['SAMPLE_PATH'] = train_df['SAMPLE_PATH'].apply(lambda x: os.path.join(train_audio_dir, os.path.basename(x)))
+test_df['SAMPLE_PATH'] = test_df['SAMPLE_PATH'].apply(lambda x: os.path.join(test_audio_dir, os.path.basename(x)))
+
+# FAN_TYPE에 따른 데이터 분리
+TrainData_FanType_0, TrainData_FanType_2 = Fantype_split(train_df)
+TestData_FanType_0, TestData_FanType_2 = Fantype_split(test_df)
+
+# TestData의 SAMPLE_ID 추출
+Test_FanType_0_SAMPLE_ID = TestData_FanType_0.SAMPLE_ID
+Test_FanType_2_SAMPLE_ID = TestData_FanType_2.SAMPLE_ID
+
+# 불필요한 컬럼 삭제
+TrainData_FanType_0 = TrainData_FanType_0.drop(columns=['FAN_TYPE'])
+TrainData_FanType_2 = TrainData_FanType_2.drop(columns=['FAN_TYPE'])
+TestData_FanType_0 = TestData_FanType_0.drop(columns=['FAN_TYPE', 'SAMPLE_ID'])
+TestData_FanType_2 = TestData_FanType_2.drop(columns=['FAN_TYPE', 'SAMPLE_ID'])
+
+# 학습 데이터에 대한 특징 추출
+train_file_paths_fan0 = TrainData_FanType_0['SAMPLE_PATH'].tolist()
+train_file_paths_fan2 = TrainData_FanType_2['SAMPLE_PATH'].tolist()
+train_features_fan0 = extract_combined_features(train_file_paths_fan0)
+train_features_fan2 = extract_combined_features(train_file_paths_fan2)
+
+# 테스트 데이터에 대한 특징 추출
+test_file_paths_fan0 = TestData_FanType_0['SAMPLE_PATH'].tolist()
+test_file_paths_fan2 = TestData_FanType_2['SAMPLE_PATH'].tolist()
+test_features_fan0 = extract_combined_features(test_file_paths_fan0)
+test_features_fan2 = extract_combined_features(test_file_paths_fan2)
+
+# 특징을 데이터프레임으로 변환
+train_features_fan0_df = pd.DataFrame(train_features_fan0)
+train_features_fan2_df = pd.DataFrame(train_features_fan2)
+test_features_fan0_df = pd.DataFrame(test_features_fan0)
+test_features_fan2_df = pd.DataFrame(test_features_fan2)
+
+# 학습 특징 결합
+combined_train_features_df = pd.concat([train_features_fan0_df, train_features_fan2_df], ignore_index=True)
+
+# 특징 정규화
+train_features_fan0_normalized, test_features_fan0_normalized = z_score_normalization(combined_train_features_df, test_features_fan0_df)
+train_features_fan2_normalized, test_features_fan2_normalized = z_score_normalization(combined_train_features_df, test_features_fan2_df)
+
+# PCA 적용
+pca_fan0 = PCA(n_components=0.95)  # 설명 분산 비율 기준으로 주성분 선택
+pca_fan2 = PCA(n_components=0.95)
+
+train_features_fan0_pca = pca_fan0.fit_transform(train_features_fan0_normalized)
+train_features_fan2_pca = pca_fan2.fit_transform(train_features_fan2_normalized)
+test_features_fan0_pca = pca_fan0.transform(test_features_fan0_normalized)
+test_features_fan2_pca = pca_fan2.transform(test_features_fan2_normalized)
+
+# 하이퍼파라미터 튜닝
+max_features_list = [1, 2]
+max_samples_list = [64, 128, 256, 512]
+bootstrap_list = [False, True]
+
+best_train_score_0 = 0
+best_train_score_2 = 0
+
+for bootstrap in tqdm(bootstrap_list):
+    for max_samples in max_samples_list:
+        for max_features in max_features_list:
+            
+            model_0 = IsolationForest(n_estimators=CFG['n_estimator'], contamination=0.0000000001, max_samples=max_samples, bootstrap=bootstrap, max_features=max_features, n_jobs=-1, random_state=777, verbose=1)
+            model_0.fit(train_features_fan0_pca)
+            model_2 = IsolationForest(n_estimators=CFG['n_estimator'], contamination=0.0000000001, max_samples=max_samples, bootstrap=bootstrap, max_features=max_features, n_jobs=-1, random_state=777, verbose=1)
+            model_2.fit(train_features_fan2_pca)
+            print('Model Trained !')
+            
+            predict_0 = model_0.predict(train_features_fan0_pca)
+            predict_2 = model_2.predict(train_features_fan2_pca)
+            
+            train_score_0 = (predict_0 == 1).sum() / len(predict_0)
+            train_score_2 = (predict_2 == 1).sum() / len(predict_2)
+            print(train_score_0, train_score_2)
+            
+            if best_train_score_0 < train_score_0:
+                best_model_0 = model_0
+                best_train_score_0 = train_score_0
+                best_max_samples_0 = max_samples
+                best_max_features_0 = max_features
+                best_bootstrap_0 = bootstrap
+                best_model_0_params = model_0.get_params()
+            print('Best model_0 score :', best_train_score_0)
+                
+            if best_train_score_2 < train_score_2:
+                best_model_2 = model_2
+                best_train_score_2 = train_score_2
+                best_max_samples_2 = max_samples
+                best_max_features_2 = max_features
+                best_bootstrap_2 = bootstrap
+                best_model_2_params = model_2.get_params()
+            print('Best model_2 score :', best_train_score_2)
+                
+print('model_0 : ', best_train_score_0,  best_max_samples_0, best_max_features_0, best_bootstrap_0)
+print('model_2 : ', best_train_score_2,  best_max_samples_2, best_max_features_2, best_bootstrap_2)
+
+# 이상치 점수 계산
+train_pred_AnomalyScore_0 = best_model_0.decision_function(train_features_fan0_pca)
+test_pred_AnomalyScore_0 = best_model_0.decision_function(test_features_fan0_pca)
+
+train_pred_AnomalyScore_2 = best_model_2.decision_function(train_features_fan2_pca)
+test_pred_AnomalyScore_2 = best_model_2.decision_function(test_features_fan2_pca)
+
+# Threshold 설정
+threshold_0 = np.percentile(train_pred_AnomalyScore_0, 95)  # 상위 5% 이상치로 설정
+threshold_2 = np.percentile(train_pred_AnomalyScore_2, 95)  # 상위 5% 이상치로 설정
+
+# 이상치 데이터 선정
+anomalies_0 = test_pred_AnomalyScore_0 < threshold_0
+anomalies_2 = test_pred_AnomalyScore_2 < threshold_2
+
+# 분포 시각화
+plt.figure(figsize=(12, 6))
+
+plt.subplot(2, 2, 1)
+plt.hist(train_pred_AnomalyScore_0, bins=50, alpha=0.75, color='blue', label='Train')
+plt.axvline(threshold_0, color='red', linestyle='dashed', linewidth=2, label='Threshold')
+plt.title('Fan Type 0 Train Anomaly Score Distribution')
+plt.legend()
+
+plt.subplot(2, 2, 2)
+plt.hist(test_pred_AnomalyScore_0, bins=50, alpha=0.75, color='green', label='Test')
+plt.axvline(threshold_0, color='red', linestyle='dashed', linewidth=2, label='Threshold')
+plt.title('Fan Type 0 Test Anomaly Score Distribution')
+plt.legend()
+
+plt.subplot(2, 2, 3)
+plt.hist(train_pred_AnomalyScore_2, bins=50, alpha=0.75, color='blue', label='Train')
+plt.axvline(threshold_2, color='red', linestyle='dashed', linewidth=2, label='Threshold')
+plt.title('Fan Type 2 Train Anomaly Score Distribution')
+plt.legend()
+
+plt.subplot(2, 2, 4)
+plt.hist(test_pred_AnomalyScore_2, bins=50, alpha=0.75, color='green', label='Test')
+plt.axvline(threshold_2, color='red', linestyle='dashed', linewidth=2, label='Threshold')
+plt.title('Fan Type 2 Test Anomaly Score Distribution')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+# SHAP 값 계산을 위해 Isolation Forest 모델을 사용한 KernelExplainer 생성
+explainer_0 = shap.KernelExplainer(best_model_0.decision_function, train_features_fan0_pca)
+shap_values_0 = explainer_0.shap_values(test_features_fan0_pca, nsamples=100)  # nsamples 값을 설정하여 계산 시간 단축
+
+explainer_2 = shap.KernelExplainer(best_model_2.decision_function, train_features_fan2_pca)
+shap_values_2 = explainer_2.shap_values(test_features_fan2_pca, nsamples=100)  # nsamples 값을 설정하여 계산 시간 단축
+
+# Force plot으로 첫 번째 예측의 설명 시각화
+shap.initjs()
+shap.force_plot(explainer_0.expected_value, shap_values_0[0], test_features_fan0_pca[0], feature_names=[f'Feature {i}' for i in range(test_features_fan0_pca.shape[1])])
+plt.show()  # Force plot 시각화
+
+# 모든 특징의 효과를 요약하는 beeswarm plot
+shap.summary_plot(shap_values_0, test_features_fan0_pca, feature_names=[f'Feature {i}' for i in range(test_features_fan0_pca.shape[1])])
+plt.show()  # Beeswarm plot 시각화 for FanType 0
+
+shap.summary_plot(shap_values_2, test_features_fan2_pca, feature_names=[f'Feature {i}' for i in range(test_features_fan2_pca.shape[1])])
+plt.show()  # Beeswarm plot 시각화 for FanType 2
