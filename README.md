@@ -1,179 +1,110 @@
- # 기계고장진단AI모델개발
+# 🛠 AI-Based Machine Fault Diagnosis Model
+
+This project focuses on building a machine fault diagnosis model using the Hitachi MIMII dataset.
+We generated frequency-domain data using Fast Fourier Transform (FFT) and applied the Isolation Forest algorithm to detect anomalies.
+To enhance interpretability, we utilized SHAP (SHapley Additive exPlanations) for model explanation.
+The trained model showed high accuracy and robustness, demonstrating its potential as a practical fault diagnosis system for industrial machinery.
 
 
-------
-이 프로젝트를 계기로 Hitachi 데이터셋을 이용해 FFT를 통해 주파수 도메인 데이터를 생성하고, Isolation Forest 알고리즘으로 이상치를 탐지하였으며, SHAP을 사용하여 모델의 해석 가능성을 높였습니다. 
-또한 발된 모델은 높은 정확도와 안정성을 보이며, 기계 고장 진단 시스템으로 활용될 수 있음을 확인하였습니다.
+
+# 📂 Dataset Overview
+
+We used the MIMII dataset provided by Hitachi, Ltd., which includes a total of 1,279 fan sound samples.
+This dataset contains both normal and abnormal sounds from various industrial machines (valves, pumps, fans, slide rails), with multiple models per machine type.
+To simulate real-world environments, background noise recorded in different factories was also included.
 
 
-# 데이터셋소개
-----------
 
-
-활용된 데이터셋은 Hitachi, Ltd.에서 제공한 MIMII 데이터셋을 활용했습니다. 이 데이터셋은 총 1279개의 팬(FAN) 소리 샘플이며, 이 데이터셋은 산업용 기계(밸브, 펌프, 팬, 슬라이드 레일)에서 발생하는 정상 및 이상 소리를 포함하고 있으며, 각 기계 유형마다 여러 모델의 소리를 담고 있습니다. 실제 환경을 재현하기 위해 여러 공장에서 녹음된 배경 소음도 함께 포함되어 있습니다.
-
-
-# 데이터 특징 추출 (FFT 고속푸리의 변환)
---------
+## 🔊 Feature Extraction (FFT - Fast Fourier Transform)
+We extracted key sound characteristics using FFT, converting raw time-series data into the frequency domain to better capture vibration patterns and abnormalities.
 
 
 ![image](https://github.com/kim-hyona/Development-of-AI-based-Machine-Fault-Diagnosis-Model-Using-Acoustic-Data/assets/148624727/d936adfa-aa2b-4ac2-89a6-7a0d5c0a76a3)
 
 
 
-1.상단 플롯: 단일 오디오 신호 (Single Audio Signal)
+📊 Audio Signal Visualization
+1. Top Plot: Single Audio Signal (Time Domain)
 
-+ 이 플롯은 시간 영역에서 오디오 신호의 파형을 나타냅니다.
+This plot shows the waveform of the raw audio signal in the time domain.
+X-axis: Time (in samples, typically seconds or milliseconds)
+Y-axis: Amplitude
+You can observe how the signal persists over time with varying amplitudes — a direct visualization of the original audio waveform.
 
+2. Middle Plot: FFT of Audio Signal (Frequency Domain)
 
-+ x축: 시간 (샘플 단위, 보통 초나 밀리초)
+This plot displays the frequency components of the signal using Fast Fourier Transform (FFT).
+X-axis: Frequency
+Y-axis: Magnitude
+Several distinct peaks on the left side indicate strong frequency components. The right side shows decreasing frequency strength — clearly illustrating dominant frequencies in the signal.
 
+3. Bottom Plot: Mel Spectrogram
 
-+ y축: 진폭 (Amplitude)
-
-
-+ 플롯의 전체 모양을 보면, 신호가 일정한 시간 동안 지속되며, 진폭이 시간에 따라 변동하는 것을 볼 수 있습니다. 이는 원시 오디오 데이터를 그대로 시각화한 것입니다.
-
-
-
-
-2.중간 플롯: FFT 변환된 오디오 신호 (FFT of Audio Signal)
-
-
-+ 이 플롯은 오디오 신호의 주파수 성분을 나타내기 위해 푸리에 변환(FFT)을 적용한 결과입니다.
-
-
-+ x축: 주파수 (Frequency)
-
-
-+ y축: 진폭 (Magnitude)
-
-
-+ 플롯의 왼쪽 부분에 여러 피크가 보이며, 이는 특정 주파수에서 강한 성분을 나타냅니다. 오른쪽으로 갈수록 주파수 성분이 약해지는 것을 볼 수 있습니다. 이러한 피크는 신호에서 주된 주파수 성분을 시각적으로 보여줍니다.
+This plot visualizes how frequency content changes over time using a Mel-scaled spectrogram.
+X-axis: Time (in seconds)
+Y-axis: Frequency (Mel scale)
+Color: Signal intensity (in decibels)
+Brighter colors represent higher energy, while darker regions represent lower intensity.
+The spectrogram is especially helpful for detecting patterns and transitions in audio over time.
 
 
 
 
-3.하단 플롯: Mel 스펙트로그램 (Mel Spectrogram of Audio Signal)
-
-
-+ 이 플롯은 시간과 주파수의 변화를 동시에 시각화한 Mel 스펙트로그램입니다.
-
-
-+ x축: 시간 (초 단위)
-
-
-+ y축: 주파수 (Mel 스케일)
-
-
-+ 색상: 신호의 세기 (Amplitude, dB 단위)
-
-
-+ 색상 막대를 보면, 색상은 신호의 강도를 나타냅니다. 일반적으로 밝은 색상은 높은 에너지를, 어두운 색상은 낮은 에너지를 나타냅니다.
-
-
-+ 스펙트로그램은 시간에 따른 주파수 성분의 변화를 보여주며, 오디오 신호의 패턴을 분석하는 데 유용합니다.
-
-
-
-
-
-
-
-
-
-# Isolation Forest 모델 학습 (PCA, Z-score 적용)
+# 🌲 Isolation Forest Model Training (with PCA & Z-Score Normalization)
 
 
 ![image](https://github.com/kim-hyona/Development-of-AI-based-Machine-Fault-Diagnosis-Model-Using-Acoustic-Data/assets/148624727/4682422f-88c8-40bc-acb2-93dd213a8a4d)
 
-모델 학습 결과 
+✅ Model Evaluation Results
+Evaluation Score: The model achieved an outstanding score of 0.9992, likely representing accuracy or F1-score.
+Best model_0 score: 0.9992
+Best model_2 score: 0.9992
 
-+ 평가 점수: 모델이 0.9992181391712275의 뛰어난 성능 점수를 기록했습니다. 이 점수는 정확도 또는 F1 스코어와 같은 평가 지표일 가능성이 큽니다.
-+ Best model_0 score: model_0의 최고 점수는 0.9992181391712275입니다.
-+ Best model_2 score: model_2의 최고 점수는 0.9992181391712275입니다.
-
-  
-**이 결과는 model_0과 model_2가 사용된 평가 지표에서 거의 완벽한 성능을 달성했음을 나타내며, 훈련된 모델의 효과성을 입증합니다.**
+** These results indicate that both model_0 and model_2 performed with near-perfect scores on the evaluation metric, demonstrating the high effectiveness and stability of the trained models. **
 
 
+# 🧠 SHAP Visualization
 
-# SHAP 시각화 설명
+SHAP (SHapley Additive Explanations) provides a visual interpretation of how each feature contributes to model predictions.
+We used KernelExplainer to calculate SHAP values for the Isolation Forest model.
 
-
-SHAP(Shapley Additive Explanations)은 각 특징이 모델 예측에 미치는 영향을 시각화합니다. KernelExplainer를 사용하여 Isolation Forest 모델의 SHAP 값을 계산했습니다.
-force plot은 단일 예측에 대한 특징의 영향을 보여줍니다. beeswarm plot은 모든 특징의 영향을 요약하여 시각화합니다. 
-이 시각화는 모델의 예측 과정을 이해하고, 어떤 특징이 가장 큰 영향을 미치는지 파악하는 데 도움을 줍니다.
+The force plot visualizes the contribution of each feature to a single prediction.
+The beeswarm plot summarizes the overall impact of all features across multiple predictions.
+These visualizations help us understand the model’s decision-making process and identify which features have the most significant influence.
 
 
 ![image](https://github.com/kim-hyona/Development-of-AI-based-Machine-Fault-Diagnosis-Model-Using-Acoustic-Data/assets/148624727/3f750335-cae0-4ffb-a11c-a456ac03aca0)
 
 
 
-## 모델 예측 과정에서 중요한 특징들
+## 📌 Key Features Influencing Model Predictions
+Using SHAP analysis, we identified several features that significantly influence the model's anomaly detection. Here's a summary of their interpretability:
 
+Feature 54: Strongly associated with abnormal patterns. Higher values increase the likelihood of being classified as an anomaly. Most SHAP values for this feature are distributed toward the negative side.
+Feature 15: Exhibits a wide range of SHAP values in both positive and negative directions. Its value contributes variably to the model’s decision — meaning high values could lead to either normal or abnormal predictions depending on context.
+Feature 27: Plays a key role in predictions, with SHAP values spread across both directions. However, high values are more often associated with positive SHAP scores, indicating a tendency for the model to classify such samples as normal.
+These features served as important indicators in predicting fan failures.
 
-SHAP 분석을 통해 모델 예측에 중요한 역할을 하는 특징들을 식별했습니다. 다음은 각 특징들의 예측 설명력에 대한 요약입니다.
+# 📊 Interpretation of the SHAP Summary Plot
+The SHAP summary plot provides the following insights:
 
+Identification of Key Features
+Features with the widest range of SHAP values (like Feature 54, 15, and 27) have the greatest impact on predictions.
+Direction of Influence
+Features with red dots concentrated on the right suggest that high feature values tend to increase the prediction outcome.
+Features with blue dots concentrated on the left indicate that low values tend to decrease the prediction outcome.
+Feature Importance
+Features with points widely spread from the center line (SHAP = 0) have a higher level of contribution and variability in model predictions.
+For instance, Feature 54 can be considered one of the most influential features in the model.
 
-**Feature 54**: 비정상 패턴을 강하게 나타내며, 높은 값일수록 모델이 해당 샘플을 이상치로 분류할 가능성이 높습니다. SHAP 값이 주로 음수 방향으로 분포되어 있습니다.
+# 🧾 Conclusion
+From the SHAP summary plot, we can draw the following conclusions:
 
-
-**Feature 15**: 모델 예측에 다양한 영향을 미치며, SHAP 값이 양수와 음수에 넓게 분포되어 있습니다. 높은 값이 양수와 음수 SHAP 값에 고루 분포되어 있어, 값이 높을 때 모델이 이를 정상 또는 비정상으로 분류할 수 있음을 시사합니다.
-
-
-**Feature 27**: 모델 예측에서 중요한 역할을 하며, SHAP 값이 양수와 음수 모두에 넓게 분포되어 있습니다. 높은 값이 양수 SHAP 값에 더 많이 몰려 있어, 높은 값이 모델이 정상으로 인식하게 만들 가능성이 높습니다.
-이러한 특징들은 팬 고장 예측에 중요한 지표로 작용하였습니다.
-
-# SHAP 요약 플롯 해석 및 결론
-------
-
-
-이 SHAP 요약 플롯을 통해 알 수 있는 점과 결론은 다음과 같습니다
-
-
-1. 주요 특징 식별
-
-+ 플롯에서 SHAP 값의 범위가 넓은 특징들이 모델의 예측에 가장 큰 영향을 미칩니다. 예를 들어, Feature 54, Feature 15, Feature 27 등이 중요한 특징으로 나타납니다.
-
-  
-2.특징값의 영향 방향
-
-+ 빨간색 점들이 오른쪽에 많이 분포한 특징은 높은 값이 예측을 증가시키는 경향이 있습니다.
-
-
-+ 파란색 점들이 왼쪽에 많이 분포한 특징은 낮은 값이 예측을 감소시키는 경향이 있습니다.
-
-
-3.특징의 중요도
-
-
-+ 점들이 중앙선(0)을 기준으로 많이 흩어진 특징일수록 예측에 미치는 변동이 크다는 것을 의미합니다.
-
-  
-+ 예를 들어, Feature 54는 모델 예측에 큰 영향을 미치는 중요한 특징으로 볼 수 있습니다.
-
-
-
-
-# **결론**
-이 SHAP 요약 플롯을 통해 다음과 같은 결론을 도출할 수 있습니다
-
-
- 1.Feature 54는 모델의 예측에 가장 큰 영향을 미치며, 높은 값일수록 예측을 증가시키는 경향이 있습니다.
-
-
- 2.Feature 15와 Feature 27도 중요한 특징으로, 각각 예측에 상당한 영향을 미칩니다.
-
-
- 3.모델의 성능을 개선하기 위해서는 이러한 중요한 특징들을 중심으로 분석하고 최적화하는 것이 필요합니다.
-
-
- 4.특정 특징값의 변화가 예측에 미치는 영향을 파악함으로써, 모델의 예측 결과를 해석하고 신뢰성을 높일 수 있습니다.
-
-
- 5.이러한 분석을 통해 모델의 예측을 보다 효과적으로 이해하고, 개선할 수 있는 방향을 제시할 수 있습니다.
-
+Feature 54 is the most impactful, and higher values tend to increase the prediction probability of an anomaly.
+Feature 15 and Feature 27 also play significant roles in model decisions.
+To improve model performance, these important features should be further analyzed and optimized.
+Understanding how specific feature values influence predictions enhances model interpretability and reliability.
+This analysis enables a deeper understanding of model behavior and provides actionable insights for improvement.
 
 
 
